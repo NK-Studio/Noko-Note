@@ -1,0 +1,6 @@
+/target
+/data
+/models/*.bin
+.env
+.DS_Store
+/Mp3
