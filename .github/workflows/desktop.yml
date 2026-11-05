@@ -1,12 +1,21 @@
 # Noko-Note 데스크톱 앱(Tauri 2) 설치 파일을 Mac·Windows에서 빌드한다.
-# 수동 실행(Actions 탭 → Run workflow) 또는 v* 태그를 push하면 돌아간다.
-# 결과물은 실행 화면의 Artifacts에서 내려받는다.
+# - 수동 실행(Actions 탭 → Run workflow): 빌드만 하고 결과물은 실행 화면의 Artifacts에 남긴다.
+# - v* 태그 push(예: v0.1.0): 빌드한 뒤 GitHub Release를 만들고 설치 파일을 올린다.
+#   태그 버전은 src-tauri/tauri.conf.json의 version과 같아야 한다.
 name: desktop
 
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+
+permissions:
+  contents: read
+
+# 같은 태그·브랜치에서 겹쳐 실행되면 앞의 것을 취소한다.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -61,7 +70,68 @@ jobs:
           name: Noko-Note-${{ matrix.name }}
           path: |
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            target/${{ matrix.target }}/release/bundle/macos/*.app
             target/${{ matrix.target }}/release/bundle/msi/*.msi
             target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 태그와 앱 버전 확인
+        run: |
+          app_version=$(jq -r .version src-tauri/tauri.conf.json)
+          if [ "v$app_version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::태그($GITHUB_REF_NAME)와 tauri.conf.json 버전(v$app_version)이 다릅니다"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 릴리스 만들고 설치 파일 올리기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          cat > notes.md <<'NOTES'
+          ## 내려받기
+
+          | 운영체제 | 파일 |
+          |---|---|
+          | Mac (Apple Silicon: M1 이상) | `Noko-Note_*_aarch64.dmg` |
+          | Mac (Intel) | `Noko-Note_*_x64.dmg` |
+          | Windows | `Noko-Note_*_x64-setup.exe` (권장) 또는 `*.msi` |
+
+          ### Mac에서 처음 열 때
+          이 앱은 Apple 개발자 인증서로 서명되지 않았습니다. dmg에서 앱을 응용 프로그램 폴더로 옮긴 뒤
+          "손상되었기 때문에 열 수 없습니다"라는 메시지가 나오면 터미널에서 아래를 한 번 실행하세요.
+
+          ```bash
+          xattr -cr /Applications/Noko-Note.app
+          ```
+
+          ### Windows에서 처음 열 때
+          SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
+
+          ### 필요한 것
+          - 요약: [Claude Code](https://claude.com/claude-code) 설치 후 앱 안에서 claude.ai 계정 연결
+          - 받아쓰기: 앱 위쪽의 **모델 내려받기**로 Whisper 모델 설치
+          NOTES
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "Noko-Note $GITHUB_REF_NAME" \
+              --notes-file notes.md \
+              --generate-notes \
+              --verify-tag
+          fi

@@ -11,6 +11,18 @@
           ─▶ 채널 컨셉 + 추가 요청 ─▶ Claude 계정(claude CLI) ─▶ 화면 / md 저장 / Slack·Discord
 ```
 
+## 내려받기
+
+[Releases](https://github.com/NK-Studio/Noko-Note/releases/latest)에서 운영체제에 맞는 설치 파일을 받으세요.
+
+| 운영체제 | 파일 |
+|---|---|
+| Mac (Apple Silicon) | `Noko-Note_*_aarch64.dmg` |
+| Mac (Intel) | `Noko-Note_*_x64.dmg` |
+| Windows | `Noko-Note_*_x64-setup.exe` 또는 `*.msi` |
+
+앱은 개발자 인증서로 서명되지 않았습니다. Mac에서 "손상되었기 때문에 열 수 없습니다"가 나오면 `xattr -cr /Applications/Noko-Note.app`을 한 번 실행하고, Windows에서 SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
+
 ## 준비물
 
 | 항목 | 설치 |
@@ -46,6 +58,11 @@ cargo tauri build        # 설치 파일 만들기
 - Mac 결과물: `target/release/bundle/macos/Noko-Note.app`, `bundle/dmg/*.dmg`
 - Windows 결과물: `target/release/bundle/msi/*.msi`, `bundle/nsis/*-setup.exe`
 - Windows 설치 파일은 Windows PC에서 빌드하거나, GitHub에 올린 뒤 **Actions → desktop → Run workflow**로 만듭니다(`.github/workflows/desktop.yml`, Mac arm64·Intel·Windows 동시 빌드).
+- 릴리스: `src-tauri/tauri.conf.json`의 `version`을 올리고 커밋한 뒤 같은 버전의 태그를 push하면, 세 가지를 빌드해 GitHub Release에 설치 파일을 올립니다.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
 - Windows에서 직접 빌드하려면 Visual Studio Build Tools(C++), CMake, LLVM(`LIBCLANG_PATH`)이 필요합니다.
 
 데스크톱 앱은 앱 안에서 로컬 서버를 빈 포트로 띄우고 그 화면을 창에 엽니다. 웹 버전과 데이터는 따로 저장됩니다.
