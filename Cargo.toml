@@ -1,6 +1,6 @@
 [package]
 name = "noko-note"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -18,7 +18,13 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.29.0", features = ["v4"] }
+
+# Metal GPU 가속은 Mac에서만 켠다. Windows·Linux는 CPU로 받아쓴다.
+[target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = "0.16"
 
 [workspace]
 members = ["src-tauri"]

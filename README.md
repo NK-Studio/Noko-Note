@@ -61,7 +61,7 @@ cargo tauri build        # 설치 파일 만들기
 - 릴리스: `src-tauri/tauri.conf.json`의 `version`을 올리고 커밋한 뒤 같은 버전의 태그를 push하면, 세 가지를 빌드해 GitHub Release에 설치 파일을 올립니다.
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.1.1 && git push origin v0.1.1
 ```
 - Windows에서 직접 빌드하려면 Visual Studio Build Tools(C++), CMake, LLVM(`LIBCLANG_PATH`)이 필요합니다.
 
