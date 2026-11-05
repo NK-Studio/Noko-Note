@@ -1,0 +1,67 @@
+# Noko-Note 데스크톱 앱(Tauri 2) 설치 파일을 Mac·Windows에서 빌드한다.
+# 수동 실행(Actions 탭 → Run workflow) 또는 v* 태그를 push하면 돌아간다.
+# 결과물은 실행 화면의 Artifacts에서 내려받는다.
+name: desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # whisper.cpp(whisper-rs-sys)는 CMake로 빌드하고, 바인딩 생성에 LLVM(libclang)을 쓴다.
+      - name: Windows 빌드 도구 확인
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files\LLVM\bin\libclang.dll")) { choco install llvm -y --no-progress }
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          cmake --version
+
+      - name: Tauri CLI 설치
+        run: cargo install tauri-cli --version 2.12.4 --locked
+
+      - name: 단위 테스트
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo test -p noko-note --release
+
+      - name: 데스크톱 앱 빌드
+        working-directory: src-tauri
+        run: cargo tauri build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Noko-Note-${{ matrix.name }}
+          path: |
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/macos/*.app
+            target/${{ matrix.target }}/release/bundle/msi/*.msi
+            target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          if-no-files-found: error

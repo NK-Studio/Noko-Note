@@ -4,21 +4,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Noko-Note</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
 <style>
 :root {
   --bg: #f6f5f2; --panel: #ffffff; --line: #e4e1da; --text: #1f1d1a; --muted: #6f6a61;
   --accent: #c2603a; --accent-soft: #f6e6de; --ok: #2f7d4f; --ok-soft: #e1f1e7;
   --warn: #9a6a00; --warn-soft: #fbf0d4; --err: #b3342b; --err-soft: #f9e1df;
   --radius: 10px; --shadow: 0 1px 2px rgba(0,0,0,.05);
+  color-scheme: light;
 }
+/* data-theme: system(기본, OS 설정을 따름) · light · dark */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #171614; --panel: #201f1c; --line: #34322d; --text: #ece9e3; --muted: #a39d92;
     --accent: #e0825c; --accent-soft: #3a2a22; --ok: #6cc893; --ok-soft: #1e3327;
     --warn: #e2b54a; --warn-soft: #362d17; --err: #ef7d73; --err-soft: #3b2120;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #171614; --panel: #201f1c; --line: #34322d; --text: #ece9e3; --muted: #a39d92;
+  --accent: #e0825c; --accent-soft: #3a2a22; --ok: #6cc893; --ok-soft: #1e3327;
+  --warn: #e2b54a; --warn-soft: #362d17; --err: #ef7d73; --err-soft: #3b2120;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
@@ -87,6 +96,13 @@ textarea { resize: vertical; min-height: 70px; }
 .empty { color: var(--muted); text-align: center; padding: 40px 10px; }
 .error-box { background: var(--err-soft); color: var(--err); padding: 10px 12px; border-radius: 8px;
   margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; min-height: 40px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: text; }
+.tags:focus-within { border-color: var(--muted); }
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 99px;
+  background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+.tag button { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
+.tags input { flex: 1; min-width: 120px; border: 0; outline: 0; background: none; padding: 2px; }
 .hint { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
 details summary { cursor: pointer; font-weight: 600; }
 #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text);
@@ -106,6 +122,7 @@ details summary { cursor: pointer; font-weight: 600; }
     <span id="whisperPill" class="pill">Whisper 확인 중</span>
     <span id="claudePill" class="pill">Claude 확인 중</span>
     <button id="loginBtn" class="btn small" hidden>Claude 계정 연결</button>
+    <button id="themeBtn" class="btn small" type="button"></button>
   </div>
 </header>
 
@@ -116,6 +133,7 @@ details summary { cursor: pointer; font-weight: 600; }
   </aside>
 
   <section class="list">
+    <div id="whisperPanel"></div>
     <div id="channelPanel"></div>
     <div class="section-title" style="margin-top:16px">녹음</div>
     <div id="recordings"></div>
@@ -145,6 +163,8 @@ function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), 3000);
 }
+// 데스크톱 앱(Tauri) 안에서 실행 중이면 저장 대화상자·파일 위치 열기를 쓴다.
+const desktop = window.__TAURI__?.core;
 function renderMarkdown(md) {
   if (window.marked && window.DOMPurify) return DOMPurify.sanitize(marked.parse(md));
   return `<pre class="transcript">${esc(md)}</pre>`;
@@ -155,13 +175,51 @@ function fmtDuration(sec) {
   return m ? `${m}분 ${s}초` : `${s}초`;
 }
 
+// ---- Whisper 모델 ----
+let statusTimer = null;
+function renderWhisper(st) {
+  const w = st.whisper, wp = $('#whisperPill'), panel = $('#whisperPanel');
+  const busy = w.state === 'loading' || w.state === 'downloading';
+  const label = { ready: 'Whisper 준비됨', loading: 'Whisper 불러오는 중', downloading: 'Whisper 내려받는 중',
+    missing: 'Whisper 모델 없음', failed: 'Whisper 오류' }[w.state];
+  wp.textContent = label; wp.className = 'pill ' + (w.state === 'ready' ? 'ok' : busy ? '' : 'err');
+  // 준비 중이면 2초마다 상태를 다시 확인한다.
+  clearTimeout(statusTimer);
+  if (busy) statusTimer = setTimeout(loadStatus, 2000);
+
+  if (w.state === 'ready' || w.state === 'loading') { panel.innerHTML = ''; return; }
+  if (w.state === 'downloading') {
+    const pct = w.total ? Math.floor(w.downloaded / w.total * 100) : 0;
+    const mb = (n) => (n / 1048576).toFixed(0);
+    panel.innerHTML = `<div class="card"><strong>Whisper 모델 내려받는 중</strong>
+      <div class="meta">${esc(w.model)} · ${mb(w.downloaded)} / ${w.total ? mb(w.total) : '?'} MB (${pct}%)</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="hint">창을 닫지 마세요. 끝나면 바로 받아쓰기를 쓸 수 있습니다.</div></div>`;
+    return;
+  }
+  const isWin = navigator.userAgent.includes('Windows');
+  const choices = st.models.map((m, i) => `
+    <label style="display:flex;gap:8px;align-items:flex-start;color:var(--text);margin:6px 0">
+      <input type="radio" name="model" value="${m.key}" ${(isWin ? i === 1 : i === 0) ? 'checked' : ''}>
+      <span>${esc(m.label)}<br><span class="meta">${esc(m.key)} · 약 ${m.size_mb >= 1000 ? (m.size_mb / 1000).toFixed(1) + 'GB' : m.size_mb + 'MB'}</span></span>
+    </label>`).join('');
+  panel.innerHTML = `<div class="card"><strong>받아쓰기에 쓸 Whisper 모델이 필요합니다</strong>
+    <div class="hint">한 번만 내려받으면 인터넷 없이 이 컴퓨터에서 받아쓰기합니다.</div>
+    ${w.state === 'failed' ? `<div class="error-box">${esc(w.error)}</div>` : ''}
+    ${choices}
+    <div class="row"><button class="btn primary" id="dlBtn">모델 내려받기</button></div></div>`;
+  $('#dlBtn').onclick = async () => {
+    const model = document.querySelector('input[name=model]:checked').value;
+    try { await api('/api/whisper/download', { method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ model }) }); await loadStatus(); } catch (e) { toast(e.message); }
+  };
+}
+
 // ---- 상태 ----
 async function loadStatus() {
   try {
     const st = await api('/api/status');
-    const wp = $('#whisperPill');
-    wp.textContent = st.whisper_ready ? 'Whisper 준비됨' : 'Whisper 모델 없음';
-    wp.className = 'pill ' + (st.whisper_ready ? 'ok' : 'err');
+    renderWhisper(st);
     const cp = $('#claudePill'), c = st.claude;
     if (!c.installed) { cp.textContent = 'Claude CLI 없음'; cp.className = 'pill err'; }
     else if (c.logged_in) {
@@ -175,7 +233,24 @@ $('#loginBtn').onclick = async () => {
   try {
     await api('/api/claude/login', { method: 'POST' });
     toast('브라우저에서 claude.ai 로그인 페이지가 열립니다. 로그인을 마치면 자동으로 연결됩니다.');
-    let n = 0; const timer = setInterval(async () => { await loadStatus(); if (++n > 60 || $('#loginBtn').hidden) clearInterval(timer); }, 3000);
+    let n = 0; const timer = setInterval// ---- 화면 테마 ----
+const THEMES = { system: '🖥 시스템', light: '☀️ 라이트', dark: '🌙 다크' };
+const NEXT_THEME = { system: 'light', light: 'dark', dark: 'system' };
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('#themeBtn').textContent = THEMES[theme];
+  $('#themeBtn').title = `화면 테마: ${THEMES[theme]} (눌러서 바꾸기)`;
+  desktop?.invoke('set_window_theme', { theme }).catch(() => {});
+}
+$('#themeBtn').onclick = async () => {
+  const theme = NEXT_THEME[document.documentElement.dataset.theme] || 'system';
+  applyTheme(theme);
+  try { await api('/api/settings/theme', { method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ theme }) }); } catch (e) { toast(e.message); }
+};
+applyTheme(THEMES[document.documentElement.dataset.theme] ? document.documentElement.dataset.theme : 'system');
+
+(async () => { await loadStatus(); if (++n > 60 || $('#loginBtn').hidden) clearInterval(timer); }, 3000);
   } catch (e) { toast(e.message); }
 };
 
@@ -207,6 +282,9 @@ function renderChannelPanel() {
         <label>채널 이름</label><input type="text" id="chName" value="${esc(c.name)}">
         <label>요약 컨셉 (이 방에 올리는 녹음은 이 기준으로 요약합니다)</label>
         <textarea id="chConcept" rows="5" placeholder="예: 주간 회의록. 결정 사항과 담당자별 할 일을 표로 정리.">${esc(c.concept)}</textarea>
+        <label>등장인물 (자주 나오는 사람 이름)</label>
+        <div class="tags" id="chPeople"><input type="text" id="chPeopleInput" placeholder="이름 입력 후 Enter"></div>
+        <div class="hint">받아쓰기와 요약에서 이름을 이 표기대로 맞춥니다. 쉼표로 여러 명을 한 번에 넣을 수 있습니다.</div>
         <label>Slack Incoming Webhook (선택)</label>
         <input type="url" id="chSlack" value="${esc(c.slack_webhook)}" placeholder="https://hooks.slack.com/services/...">
         <label>Discord Webhook (선택)</label>
@@ -229,10 +307,44 @@ function renderChannelPanel() {
     </div>`;
   $('#chSave').onclick = saveChannel;
   $('#chDelete').onclick = deleteChannel;
+  setupPeople(c.participants || []);
   setupUpload();
 }
+// ---- 등장인물 태그 ----
+let people = [];
+function setupPeople(initial) {
+  people = [...initial];
+  const box = $('#chPeople'), input = $('#chPeopleInput');
+  const render = () => {
+    box.querySelectorAll('.tag').forEach(t => t.remove());
+    people.forEach((name, i) => {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.innerHTML = `${esc(name)}<button type="button" title="빼기" aria-label="${esc(name)} 빼기">×</button>`;
+      tag.querySelector('button').onclick = () => { people.splice(i, 1); render(); };
+      box.insertBefore(tag, input);
+    });
+  };
+  const commit = () => {
+    for (const raw of input.value.split(/[,，、\n]/)) {
+      const name = raw.trim().replace(/\s+/g, ' ');
+      if (name && !people.some(p => p.toLowerCase() === name.toLowerCase())) people.push(name);
+    }
+    input.value = ''; render();
+  };
+  input.onkeydown = e => {
+    if (e.isComposing) return; // 한글 조합 중 Enter는 무시
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+    else if (e.key === 'Backspace' && !input.value && people.length) { people.pop(); render(); }
+  };
+  input.onblur = commit;
+  input.onpaste = () => setTimeout(commit);
+  box.onclick = e => { if (e.target === box) input.focus(); };
+  render();
+}
 function channelForm() {
-  return { name: $('#chName').value, concept: $('#chConcept').value,
+  if ($('#chPeopleInput').value.trim()) $('#chPeopleInput').onblur();
+  return { name: $('#chName').value, concept: $('#chConcept').value, participants: people,
     slack_webhook: $('#chSlack').value, discord_webhook: $('#chDiscord').value };
 }
 async function saveChannel() {
@@ -341,7 +453,10 @@ function renderDetail() {
       ${r.summary_path ? `<br>저장 위치: ${esc(r.summary_path)}` : ''}</div>
     ${r.error ? `<div class="error-box">${esc(r.error)}</div>` : ''}
     <div class="row">
-      <a class="btn" href="/api/recordings/${r.id}/summary.md" ${r.summary ? '' : 'style="pointer-events:none;opacity:.5"'}>md 다운로드</a>
+      ${desktop
+        ? `<button class="btn" data-save ${r.summary ? '' : 'disabled'}>md로 저장…</button>
+           <button class="btn" data-reveal ${r.summary_path ? '' : 'disabled'}>${navigator.userAgent.includes('Windows') ? '탐색기에서 보기' : 'Finder에서 보기'}</button>`
+        : `<a class="btn" href="/api/recordings/${r.id}/summary.md" ${r.summary ? '' : 'style="pointer-events:none;opacity:.5"'}>md 다운로드</a>`}
       <button class="btn" data-copy ${r.summary ? '' : 'disabled'}>요약 복사</button>
       <button class="btn" data-send="slack" ${r.summary && ch.slack_webhook ? '' : 'disabled'} title="${ch.slack_webhook ? '' : '채널 설정에서 Slack 웹훅을 넣으세요'}">Slack 보내기</button>
       <button class="btn" data-send="discord" ${r.summary && ch.discord_webhook ? '' : 'disabled'} title="${ch.discord_webhook ? '' : '채널 설정에서 Discord 웹훅을 넣으세요'}">Discord 보내기</button>
@@ -350,7 +465,7 @@ function renderDetail() {
     <div class="card" style="margin-top:12px">
       <label style="margin-top:0">다른 컨셉으로 다시 요약 (채널 컨셉에 덧붙여 이번에만 적용)</label>
       <textarea id="reInstruction" rows="2" placeholder="예: 임원 보고용으로 5줄 이내로 요약해줘">${esc(r.instruction)}</textarea>
-      <div class="row"><button class="btn primary" id="reBtn" ${busy || !r.transcript ? 'disabled' : ''}>다시 요약</button></div>
+      <div class="row"><button class="btn primary" id="reBtn" ${busy || (!r.transcript && r.status !== 'error') ? 'disabled' : ''}>${r.transcript ? '다시 요약' : '받아쓰기부터 다시'}</button></div>
     </div>
     <div class="tabs">
       <button class="tab ${state.tab === 'summary' ? 'active' : ''}" data-tab="summary">요약</button>
@@ -361,6 +476,13 @@ function renderDetail() {
   document.querySelectorAll('[data-send]').forEach(b => b.onclick = () => sendTo(b.dataset.send));
   $('[data-copy]').onclick = async () => { await navigator.clipboard.writeText(r.summary); toast('요약을 복사했습니다'); };
   $('[data-del]').onclick = deleteRecording;
+  if (desktop) {
+    $('[data-save]').onclick = async () => {
+      try { const path = await desktop.invoke('save_markdown', { recordingId: r.id });
+        if (path) toast(`저장했습니다: ${path}`); } catch (e) { toast(String(e)); }
+    };
+    $('[data-reveal]').onclick = () => desktop.invoke('reveal_summary', { recordingId: r.id }).catch(e => toast(String(e)));
+  }
   $('#reBtn').onclick = resummarize;
 }
 async function sendTo(target) {
@@ -395,6 +517,23 @@ setInterval(async () => {
     }
   }
 }, 2000);
+
+// ---- 화면 테마 ----
+const THEMES = { system: '🖥 시스템', light: '☀️ 라이트', dark: '🌙 다크' };
+const NEXT_THEME = { system: 'light', light: 'dark', dark: 'system' };
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('#themeBtn').textContent = THEMES[theme];
+  $('#themeBtn').title = `화면 테마: ${THEMES[theme]} (눌러서 바꾸기)`;
+  desktop?.invoke('set_window_theme', { theme }).catch(() => {});
+}
+$('#themeBtn').onclick = async () => {
+  const theme = NEXT_THEME[document.documentElement.dataset.theme] || 'system';
+  applyTheme(theme);
+  try { await api('/api/settings/theme', { method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ theme }) }); } catch (e) { toast(e.message); }
+};
+applyTheme(THEMES[document.documentElement.dataset.theme] ? document.documentElement.dataset.theme : 'system');
 
 (async () => { await loadStatus(); await loadChannels(); await loadRecordings(); })();
 </script>

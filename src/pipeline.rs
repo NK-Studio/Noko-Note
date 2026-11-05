@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::db::{Channel, Db, Recording, Status};
 use crate::summarize::{SummaryRequest, Summarizer};
+use crate::models::WhisperSlot;
 use crate::transcribe::Transcriber;
 
 #[derive(Clone)]
@@ -23,12 +24,12 @@ impl Pipeline {
     pub fn start(
         db: Db,
         summarizer: Summarizer,
-        transcriber: Option<Arc<Transcriber>>,
+        whisper: Arc<WhisperSlot>,
         summaries_dir: PathBuf,
     ) -> Pipeline {
         let (tx, rx) = mpsc::unbounded_channel();
         let pipeline = Pipeline { db, summarizer, summaries_dir, transcribe_tx: tx };
-        tokio::spawn(pipeline.clone().transcribe_worker(rx, transcriber));
+        tokio::spawn(pipeline.clone().transcribe_worker(rx, whisper));
         pipeline
     }
 
@@ -64,13 +65,17 @@ impl Pipeline {
     async fn transcribe_worker(
         self,
         mut rx: mpsc::UnboundedReceiver<i64>,
-        transcriber: Option<Arc<Transcriber>>,
+        whisper: Arc<WhisperSlot>,
     ) {
         while let Some(id) = rx.recv().await {
-            let result = match &transcriber {
-                Some(t) => self.transcribe(id, t.clone()).await,
+            // 모델을 불러오거나 내려받는 중이면 끝날 때까지 기다린다.
+            while whisper.is_preparing() {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            let result = match whisper.transcriber() {
+                Some(t) => self.transcribe(id, t).await,
                 None => Err(anyhow::anyhow!(
-                    "Whisper 모델이 준비되지 않았습니다. models/ 폴더와 서버 로그를 확인하세요"
+                    "Whisper 모델이 준비되지 않았습니다. 화면 위쪽에서 모델을 내려받은 뒤 다시 올려 주세요"
                 )),
             };
             match result {
@@ -85,6 +90,11 @@ impl Pipeline {
 
     async fn transcribe(&self, id: i64, transcriber: Arc<Transcriber>) -> Result<()> {
         let rec = self.db.get_recording(id)?.context("녹음을 찾을 수 없습니다")?;
+        let participants = self
+            .db
+            .get_channel(rec.channel_id)?
+            .map(|c| c.participants)
+            .unwrap_or_default();
         self.db.set_status(id, Status::Transcribing)?;
         self.db.set_progress(id, 0)?;
         tracing::info!(recording_id = id, "받아쓰기 시작: {}", rec.title);
@@ -93,7 +103,7 @@ impl Pipeline {
         let audio = PathBuf::from(&rec.audio_path);
         let transcript = tokio::task::spawn_blocking(move || {
             let mut last = -1;
-            transcriber.transcribe(&audio, move |p| {
+            transcriber.transcribe(&audio, &participants, move |p| {
                 // 진행률이 바뀔 때만 DB에 쓴다.
                 if p != last {
                     last = p;
@@ -123,6 +133,7 @@ impl Pipeline {
                 title: &rec.title,
                 duration_sec: rec.duration_sec,
                 concept: &channel.concept,
+                participants: &channel.participants,
                 instruction: &rec.instruction,
                 transcript: &rec.transcript,
             })

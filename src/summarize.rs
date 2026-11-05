@@ -4,7 +4,7 @@
 //! 비대화 모드(`-p`)로 불러 요약한다. 로그인은 `claude auth login --claudeai`가
 //! 브라우저에서 claude.ai 로그인 페이지를 열어 처리한다.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -12,6 +12,8 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+use crate::tools;
 
 /// 녹취록이 길면 요약에 몇 분 걸릴 수 있다.
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(20 * 60);
@@ -31,7 +33,8 @@ const DEFAULT_CONCEPT: &str = "\
 
 #[derive(Clone)]
 pub struct Summarizer {
-    claude_bin: String,
+    /// 직접 지정한 claude 실행 파일. 없으면 PATH·흔한 설치 위치에서 찾는다.
+    claude_bin: Option<PathBuf>,
     model: Option<String>,
     /// CLAUDE.md 등이 섞여 들어가지 않도록 비어 있는 작업 폴더에서 실행한다.
     work_dir: PathBuf,
@@ -42,6 +45,8 @@ pub struct SummaryRequest<'a> {
     pub title: &'a str,
     pub duration_sec: f64,
     pub concept: &'a str,
+    /// 녹음에 나오는 사람 이름(정확한 표기).
+    pub participants: &'a [String],
     pub instruction: &'a str,
     pub transcript: &'a str,
 }
@@ -78,26 +83,44 @@ struct PrintResult {
 }
 
 impl Summarizer {
-    pub fn new(claude_bin: String, model: Option<String>, work_dir: PathBuf) -> Summarizer {
+    pub fn new(claude_bin: Option<PathBuf>, model: Option<String>, work_dir: PathBuf) -> Summarizer {
         Summarizer { claude_bin, model, work_dir }
+    }
+
+    fn claude_path(&self) -> Option<PathBuf> {
+        match &self.claude_bin {
+            Some(p) if p.components().count() > 1 => Some(p.clone()),
+            Some(name) => tools::find_executable(&name.to_string_lossy()),
+            None => tools::find_executable("claude"),
+        }
+    }
+
+    fn command(&self, claude: &Path) -> Command {
+        let mut cmd = Command::new(claude);
+        if let Some(dir) = claude.parent() {
+            cmd.env("PATH", tools::path_with(dir));
+        }
+        tools::hide_console_tokio(&mut cmd);
+        cmd
     }
 
     /// Claude 계정 로그인 상태를 확인한다.
     pub async fn auth_status(&self) -> AuthStatus {
-        let output = Command::new(&self.claude_bin)
+        let missing = AuthStatus {
+            installed: false,
+            logged_in: false,
+            auth_method: None,
+            email: None,
+            subscription: None,
+        };
+        let Some(claude) = self.claude_path() else { return missing };
+        let output = self
+            .command(&claude)
             .args(["auth", "status"])
             .stdin(Stdio::null())
             .output()
             .await;
-        let Ok(output) = output else {
-            return AuthStatus {
-                installed: false,
-                logged_in: false,
-                auth_method: None,
-                email: None,
-                subscription: None,
-            };
-        };
+        let Ok(output) = output else { return missing };
         let raw: Option<RawAuthStatus> = serde_json::from_slice(&output.stdout).ok();
         match raw {
             Some(r) => AuthStatus {
@@ -119,7 +142,15 @@ impl Summarizer {
 
     /// 브라우저에서 claude.ai 로그인 페이지를 연다. 로그인이 끝나면 CLI가 스스로 종료된다.
     pub fn start_login(&self) -> Result<()> {
-        let mut child = std::process::Command::new(&self.claude_bin)
+        let claude = self.claude_path().context(
+            "Claude Code CLI(claude)를 찾을 수 없습니다. https://claude.com/claude-code 에서 설치하세요",
+        )?;
+        let mut cmd = std::process::Command::new(&claude);
+        if let Some(dir) = claude.parent() {
+            cmd.env("PATH", tools::path_with(dir));
+        }
+        tools::hide_console(&mut cmd);
+        let mut child = cmd
             .args(["auth", "login", "--claudeai"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -137,7 +168,18 @@ impl Summarizer {
         std::fs::create_dir_all(&self.work_dir)?;
 
         let concept = if req.concept.trim().is_empty() { DEFAULT_CONCEPT } else { req.concept.trim() };
-        let system_prompt = format!("{BASE_SYSTEM_PROMPT}\n\n## 이 방의 요약 컨셉\n{concept}");
+        let mut system_prompt = format!("{BASE_SYSTEM_PROMPT}\n\n## 이 방의 요약 컨셉\n{concept}");
+        if !req.participants.is_empty() {
+            let names: Vec<String> = req.participants.iter().map(|n| format!("- {n}")).collect();
+            system_prompt.push_str(&format!(
+                "\n\n## 등장인물 (이름 표기 기준)\n\
+                 이 녹음에 나오는 사람들입니다. 요약에 사람 이름을 쓸 때는 반드시 아래 표기를 그대로 쓰세요. \
+                 녹취록에서 발음이 비슷하게 잘못 받아써진 이름은 문맥상 확실하면 이 목록의 이름으로 바로잡고, \
+                 누구인지 확실하지 않으면 이름을 추측하지 말고 \"참석자\"처럼 쓰세요. \
+                 목록에 있다고 해서 녹취록에 나오지 않은 사람을 참석했다고 쓰지는 마세요.\n{}",
+                names.join("\n")
+            ));
+        }
 
         let minutes = (req.duration_sec / 60.0).round() as i64;
         let mut prompt = format!("제목: {}\n녹음 길이: 약 {}분\n", req.title, minutes);
@@ -149,7 +191,19 @@ impl Summarizer {
             req.transcript
         ));
 
-        let mut cmd = Command::new(&self.claude_bin);
+        // 시스템 프롬프트는 파일로 넘긴다(Windows .cmd 실행 시 인자 따옴표 문제를 피함).
+        let prompt_file = self.work_dir.join(format!("system-{}.md", uuid::Uuid::new_v4()));
+        std::fs::write(&prompt_file, &system_prompt)?;
+        let result = self.run_print(&prompt_file, &prompt).await;
+        let _ = std::fs::remove_file(&prompt_file);
+        result
+    }
+
+    async fn run_print(&self, system_prompt_file: &Path, prompt: &str) -> Result<String> {
+        let claude = self.claude_path().context(
+            "Claude Code CLI(claude)를 찾을 수 없습니다. https://claude.com/claude-code 에서 설치한 뒤 계정을 연결하세요",
+        )?;
+        let mut cmd = self.command(&claude);
         cmd.current_dir(&self.work_dir)
             .args([
                 "-p",
@@ -164,9 +218,9 @@ impl Summarizer {
                 "--disable-slash-commands",
                 "--setting-sources",
                 "project",
-                "--system-prompt",
-                &system_prompt,
+                "--system-prompt-file",
             ])
+            .arg(system_prompt_file)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

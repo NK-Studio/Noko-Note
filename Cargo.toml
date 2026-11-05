@@ -13,8 +13,12 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "str
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+symphonia = { version = "0.5", default-features = false, features = ["aac", "isomp4", "mp3", "wav", "pcm", "flac", "ogg", "vorbis", "alac"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.29.0", features = ["v4"] }
 whisper-rs = { version = "0.16", features = ["metal"] }
+
+[workspace]
+members = ["src-tauri"]

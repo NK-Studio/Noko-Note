@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "앱 안의 로컬 서버 화면에서 md 저장·파일 위치 열기·창 테마 바꾸기만 허용",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
+  "permissions": ["allow-save-markdown", "allow-reveal-summary", "allow-set-window-theme"]
+}

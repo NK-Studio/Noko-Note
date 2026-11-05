@@ -4,3 +4,5 @@
 .env
 .DS_Store
 /Mp3
+/src-tauri/gen
+/assets/*.png
