@@ -1,5 +1,7 @@
 # Noko-Note
 
+<img width="1306" height="836" alt="image" src="https://github.com/user-attachments/assets/8271d39e-e24c-48ef-bbc8-fe002bec6f1e" />
+
 음성 파일을 올리면 **로컬 Whisper**로 받아쓰고, **채널(방)마다 정한 요약 컨셉**에 맞춰 **Claude 계정**으로 요약해 주는 로컬 웹 앱입니다. 요약은 화면에서 읽거나 md 파일로 저장하고, Slack·Discord로 보낼 수 있습니다.
 
 **웹 버전**(브라우저)과 **데스크톱 앱**(Tauri 2, Mac·Windows) 두 가지로 쓸 수 있고, 화면과 기능은 같습니다.
