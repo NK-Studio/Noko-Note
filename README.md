@@ -101,7 +101,8 @@ API 키 대신, 이 Mac에 claude.ai 계정으로 로그인된 Claude Code CLI�
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| GET | `/api/status` | Whisper 모델 상태, Claude 계정 로그인 상태 |
+| GET | `/api/status` | Whisper 모델 상태, Claude 계정 로그인 상태, 요약 모델 목록·현재 모델 |
+| PUT | `/api/settings/summary-model` | 요약 모델 바꾸기 (`{"model": "claude-opus-5-5"}`) |
 | POST | `/api/whisper/download` | 모델 내려받기 (`{"model": "large-v3-turbo"}`) |
 | POST | `/api/claude/login` | 브라우저에서 claude.ai 로그인 시작 |
 | GET·POST | `/api/channels` | 채널 목록·생성 |

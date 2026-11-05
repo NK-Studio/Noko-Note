@@ -19,7 +19,7 @@ use crate::db::{self, ChannelInput, Db};
 use crate::models::{WhisperSlot, WhisperStatus};
 use crate::notify;
 use crate::pipeline::{self, Pipeline};
-use crate::summarize::Summarizer;
+use crate::summarize::{self, Summarizer};
 use crate::Config;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
@@ -91,6 +91,7 @@ impl Noko {
         let app = Router::new()
             .route("/", get(index))
             .route("/api/settings/theme", put(set_theme))
+            .route("/api/settings/summary-model", put(set_summary_model))
             .route("/vendor/marked.min.js", get(|| async { javascript(MARKED_JS) }))
             .route("/vendor/purify.min.js", get(|| async { javascript(PURIFY_JS) }))
             .route("/api/status", get(status))
@@ -174,6 +175,29 @@ async fn set_theme(State(s): State<AppState>, Json(input): Json<ThemeInput>) -> 
     Ok(StatusCode::NO_CONTENT)
 }
 
+const SUMMARY_MODEL_KEY: &str = "summary_model";
+
+/// 화면에서 고른 요약 모델. 고른 적이 없거나 목록에서 사라진 모델이면 `None`.
+pub(crate) fn load_summary_model(db: &Db) -> Option<String> {
+    db.get_setting(SUMMARY_MODEL_KEY)
+        .ok()
+        .flatten()
+        .filter(|m| summarize::is_known_model(m))
+}
+
+#[derive(Deserialize)]
+struct SummaryModelInput {
+    model: String,
+}
+
+async fn set_summary_model(State(s): State<AppState>, Json(input): Json<SummaryModelInput>) -> ApiResult<StatusCode> {
+    if !summarize::is_known_model(&input.model) {
+        return Err(bad_request("목록에 없는 모델입니다"));
+    }
+    s.db.set_setting(SUMMARY_MODEL_KEY, &input.model)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn javascript(body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], body).into_response()
 }
@@ -236,6 +260,9 @@ async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
         "whisper": whisper,
         "models": s.whisper.choices(),
         "claude": claude,
+        "summary_model": s.summarizer.resolve_model(load_summary_model(&s.db).as_deref()),
+        "summary_models": summarize::MODEL_CHOICES,
+        "default_summary_model": summarize::DEFAULT_MODEL,
     }))
 }
 

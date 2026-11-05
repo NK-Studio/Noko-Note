@@ -125,7 +125,9 @@ impl Pipeline {
             anyhow::bail!("녹취록이 비어 있어 요약할 수 없습니다");
         }
         self.db.set_status(id, Status::Summarizing)?;
-        tracing::info!(recording_id = id, "요약 시작 (채널: {})", channel.name);
+        let chosen = crate::server::load_summary_model(&self.db);
+        let model = self.summarizer.resolve_model(chosen.as_deref()).to_string();
+        tracing::info!(recording_id = id, "요약 시작 (채널: {}, 모델: {model})", channel.name);
 
         let summary = self
             .summarizer
@@ -136,6 +138,7 @@ impl Pipeline {
                 participants: &channel.participants,
                 instruction: &rec.instruction,
                 transcript: &rec.transcript,
+                model: Some(&model),
             })
             .await?;
 

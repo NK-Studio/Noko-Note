@@ -27,6 +27,47 @@ const BASE_SYSTEM_PROMPT: &str = "\
 - 결과는 한국어 마크다운으로, 화면에서 읽기 좋게 제목·소제목·글머리표·표를 알맞게 씁니다.
 - 요약 결과만 출력하고 앞뒤 인사말이나 설명은 붙이지 않습니다.";
 
+/// 요약 모델을 따로 고르지 않았을 때 쓰는 모델.
+/// 50분이 넘는 회의 녹취록은 내용이 길고 주제가 여러 번 바뀌므로, 긴 글을 끝까지
+/// 놓치지 않고 정리하는 능력과 계정 사용량 사이에서 균형이 좋은 Opus를 기본으로 한다.
+pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
+
+/// 화면 드롭다운에 보여 줄 요약 모델. `id`는 `claude --model`에 그대로 넘긴다.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ModelChoice {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+}
+
+pub const MODEL_CHOICES: &[ModelChoice] = &[
+    ModelChoice {
+        id: "claude-opus-5-5",
+        label: "Claude Opus 5.5 (추천)",
+        description: "긴 회의도 흐름을 놓치지 않고 결정 사항·할 일을 꼼꼼히 정리합니다. 품질과 사용량의 균형이 가장 좋습니다.",
+    },
+    ModelChoice {
+        id: "claude-fable-5-1",
+        label: "Claude Fable 5.1",
+        description: "가장 뛰어난 모델입니다. 아주 길거나 복잡한 회의에 좋지만 느리고 계정 사용량을 가장 많이 씁니다. 구독 요금제에 따라 쓸 수 없을 수 있습니다.",
+    },
+    ModelChoice {
+        id: "claude-sonnet-5-5",
+        label: "Claude Sonnet 5.5",
+        description: "빠르고 사용량이 적습니다. 일상적인 회의 요약에 충분합니다.",
+    },
+    ModelChoice {
+        id: "claude-haiku-5-5",
+        label: "Claude Haiku 5.5",
+        description: "가장 빠르고 가볍습니다. 짧은 메모나 간단한 녹음에 알맞고, 긴 회의는 세부 내용이 빠질 수 있습니다.",
+    },
+];
+
+/// 저장된 값이 목록에 있는 모델인지 확인한다.
+pub fn is_known_model(id: &str) -> bool {
+    MODEL_CHOICES.iter().any(|m| m.id == id)
+}
+
 const DEFAULT_CONCEPT: &str = "\
 핵심 내용을 한눈에 볼 수 있게 정리합니다: 한 줄 요약, 주요 내용(주제별), \
 결정된 사항, 해야 할 일(담당자·기한이 나오면 함께), 기억할 만한 발언 순서로 씁니다.";
@@ -35,6 +76,7 @@ const DEFAULT_CONCEPT: &str = "\
 pub struct Summarizer {
     /// 직접 지정한 claude 실행 파일. 없으면 PATH·흔한 설치 위치에서 찾는다.
     claude_bin: Option<PathBuf>,
+    /// 환경 변수 `CLAUDE_MODEL`. 화면에서 모델을 고르지 않았을 때 기본 모델 대신 쓴다.
     model: Option<String>,
     /// CLAUDE.md 등이 섞여 들어가지 않도록 비어 있는 작업 폴더에서 실행한다.
     work_dir: PathBuf,
@@ -49,6 +91,8 @@ pub struct SummaryRequest<'a> {
     pub participants: &'a [String],
     pub instruction: &'a str,
     pub transcript: &'a str,
+    /// 화면에서 고른 요약 모델. 없으면 `CLAUDE_MODEL` → [`DEFAULT_MODEL`] 순으로 쓴다.
+    pub model: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +129,13 @@ struct PrintResult {
 impl Summarizer {
     pub fn new(claude_bin: Option<PathBuf>, model: Option<String>, work_dir: PathBuf) -> Summarizer {
         Summarizer { claude_bin, model, work_dir }
+    }
+
+    /// 이번 요약에 쓸 모델.
+    pub fn resolve_model<'a>(&'a self, chosen: Option<&'a str>) -> &'a str {
+        chosen
+            .or(self.model.as_deref())
+            .unwrap_or(DEFAULT_MODEL)
     }
 
     fn claude_path(&self) -> Option<PathBuf> {
@@ -194,12 +245,13 @@ impl Summarizer {
         // 시스템 프롬프트는 파일로 넘긴다(Windows .cmd 실행 시 인자 따옴표 문제를 피함).
         let prompt_file = self.work_dir.join(format!("system-{}.md", uuid::Uuid::new_v4()));
         std::fs::write(&prompt_file, &system_prompt)?;
-        let result = self.run_print(&prompt_file, &prompt).await;
+        let model = self.resolve_model(req.model);
+        let result = self.run_print(&prompt_file, &prompt, model).await;
         let _ = std::fs::remove_file(&prompt_file);
         result
     }
 
-    async fn run_print(&self, system_prompt_file: &Path, prompt: &str) -> Result<String> {
+    async fn run_print(&self, system_prompt_file: &Path, prompt: &str, model: &str) -> Result<String> {
         let claude = self.claude_path().context(
             "Claude Code CLI(claude)를 찾을 수 없습니다. https://claude.com/claude-code 에서 설치한 뒤 계정을 연결하세요",
         )?;
@@ -221,14 +273,11 @@ impl Summarizer {
                 "--system-prompt-file",
             ])
             .arg(system_prompt_file)
+            .args(["--model", model])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        if let Some(model) = &self.model {
-            cmd.args(["--model", model]);
-        }
-
         let mut child = cmd.spawn().context("claude CLI를 실행하지 못했습니다")?;
         let mut stdin = child.stdin.take().context("claude stdin을 열지 못했습니다")?;
         stdin.write_all(prompt.as_bytes()).await?;
