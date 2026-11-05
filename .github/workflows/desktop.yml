@@ -101,7 +101,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ls -la dist
+          # 아티팩트가 dmg/msi/nsis 하위 폴더로 내려오므로 파일만 한 폴더에 모은다
+          mkdir -p files
+          find dist -type f -exec mv {} files/ \;
+          ls -la files
           cat > notes.md <<'NOTES'
           ## 내려받기
 
@@ -127,9 +130,9 @@ jobs:
           - 받아쓰기: 앱 위쪽의 **모델 내려받기**로 Whisper 모델 설치
           NOTES
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release upload "$GITHUB_REF_NAME" files/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/* \
+            gh release create "$GITHUB_REF_NAME" files/* \
               --title "Noko-Note $GITHUB_REF_NAME" \
               --notes-file notes.md \
               --generate-notes \
