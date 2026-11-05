@@ -17,11 +17,10 @@
 
 | 운영체제 | 파일 |
 |---|---|
-| Mac (Apple Silicon) | `Noko-Note_*_aarch64.dmg` |
-| Mac (Intel) | `Noko-Note_*_x64.dmg` |
+| Mac (Apple Silicon, M1 이상) | `Noko-Note_*_aarch64.dmg` |
 | Windows | `Noko-Note_*_x64-setup.exe` 또는 `*.msi` |
 
-앱은 개발자 인증서로 서명되지 않았습니다. Mac에서 "손상되었기 때문에 열 수 없습니다"가 나오면 `xattr -cr /Applications/Noko-Note.app`을 한 번 실행하고, Windows에서 SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
+Intel Mac용 설치 파일은 제공하지 않습니다(필요하면 소스에서 직접 빌드). 앱은 개발자 인증서로 서명되지 않았습니다. Mac에서 "손상되었기 때문에 열 수 없습니다"가 나오면 `xattr -cr /Applications/Noko-Note.app`을 한 번 실행하고, Windows에서 SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
 
 ## 준비물
 
@@ -57,8 +56,8 @@ cargo tauri build        # 설치 파일 만들기
 
 - Mac 결과물: `target/release/bundle/macos/Noko-Note.app`, `bundle/dmg/*.dmg`
 - Windows 결과물: `target/release/bundle/msi/*.msi`, `bundle/nsis/*-setup.exe`
-- Windows 설치 파일은 Windows PC에서 빌드하거나, GitHub에 올린 뒤 **Actions → desktop → Run workflow**로 만듭니다(`.github/workflows/desktop.yml`, Mac arm64·Intel·Windows 동시 빌드).
-- 릴리스: `src-tauri/tauri.conf.json`의 `version`을 올리고 커밋한 뒤 같은 버전의 태그를 push하면, 세 가지를 빌드해 GitHub Release에 설치 파일을 올립니다.
+- Windows 설치 파일은 Windows PC에서 빌드하거나, GitHub에 올린 뒤 **Actions → desktop → Run workflow**로 만듭니다(`.github/workflows/desktop.yml`, Mac Apple Silicon·Windows 동시 빌드).
+- 릴리스: `src-tauri/tauri.conf.json`의 `version`을 올리고 커밋한 뒤 같은 버전의 태그를 push하면, 두 가지를 빌드해 GitHub Release에 설치 파일을 올립니다.
 
 ```bash
 git tag v0.1.1 && git push origin v0.1.1

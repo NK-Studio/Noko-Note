@@ -1,4 +1,4 @@
-# Noko-Note 데스크톱 앱(Tauri 2) 설치 파일을 Mac·Windows에서 빌드한다.
+# Noko-Note 데스크톱 앱(Tauri 2) 설치 파일을 Mac(Apple Silicon)·Windows에서 빌드한다.
 # - 수동 실행(Actions 탭 → Run workflow): 빌드만 하고 결과물은 실행 화면의 Artifacts에 남긴다.
 # - v* 태그 push(예: v0.1.0): 빌드한 뒤 GitHub Release를 만들고 설치 파일을 올린다.
 #   태그 버전은 src-tauri/tauri.conf.json의 version과 같아야 한다.
@@ -26,9 +26,6 @@ jobs:
           - name: macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
-          - name: macos-x64
-            os: macos-latest
-            target: x86_64-apple-darwin
           - name: windows-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -58,7 +55,6 @@ jobs:
         run: cargo install tauri-cli --version 2.12.4 --locked
 
       - name: 단위 테스트
-        if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test -p noko-note --release
 
       - name: 데스크톱 앱 빌드
@@ -110,8 +106,7 @@ jobs:
 
           | 운영체제 | 파일 |
           |---|---|
-          | Mac (Apple Silicon: M1 이상) | `Noko-Note_*_aarch64.dmg` |
-          | Mac (Intel) | `Noko-Note_*_x64.dmg` |
+          | Mac (Apple Silicon: M1 이상, Intel Mac은 지원 안 함) | `Noko-Note_*_aarch64.dmg` |
           | Windows | `Noko-Note_*_x64-setup.exe` (권장) 또는 `*.msi` |
 
           ### Mac에서 처음 열 때
