@@ -57,9 +57,39 @@ jobs:
       - name: 단위 테스트
         run: cargo test -p noko-note --release
 
+      # 공증에 쓸 App Store Connect API 키(.p8)를 파일로 꺼낸다. Tauri는 키 경로(APPLE_API_KEY_PATH)를 받는다.
+      - name: 공증용 API 키 준비
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          key_path="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      # Mac에서는 Tauri가 아래 환경 변수로 Developer ID 서명과 공증을 함께 한다.
+      # APPLE_API_KEY는 Tauri에서 키 ID를 뜻하므로 APPLE_API_KEY_ID 시크릿을 넘긴다.
       - name: 데스크톱 앱 빌드
         working-directory: src-tauri
+        env:
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          KEYCHAIN_PASSWORD: ${{ runner.os == 'macOS' && secrets.KEYCHAIN_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.APPLE_API_ISSUER || '' }}
         run: cargo tauri build --target ${{ matrix.target }}
+
+      - name: 서명·공증 확인
+        if: runner.os == 'macOS'
+        run: |
+          app="target/${{ matrix.target }}/release/bundle/macos/Noko-Note.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -vv -t exec "$app"
+          xcrun stapler validate "$app"
+
+      - name: 공증용 API 키 지우기
+        if: always() && runner.os == 'macOS'
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -110,12 +140,7 @@ jobs:
           | Windows | `Noko-Note_*_x64-setup.exe` (권장) 또는 `*.msi` |
 
           ### Mac에서 처음 열 때
-          이 앱은 Apple 개발자 인증서로 서명되지 않았습니다. dmg에서 앱을 응용 프로그램 폴더로 옮긴 뒤
-          "손상되었기 때문에 열 수 없습니다"라는 메시지가 나오면 터미널에서 아래를 한 번 실행하세요.
-
-          ```bash
-          xattr -cr /Applications/Noko-Note.app
-          ```
+          Apple Developer ID로 서명·공증된 앱입니다. dmg를 열고 앱을 응용 프로그램 폴더로 옮기면 바로 실행됩니다.
 
           ### Windows에서 처음 열 때
           SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
