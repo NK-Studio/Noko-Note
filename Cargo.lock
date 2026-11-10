@@ -2503,6 +2503,7 @@ name = "noko-note-desktop"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "libc",
  "noko-note",
  "tauri",
  "tauri-build",

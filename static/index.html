@@ -386,6 +386,9 @@ $('#newChannelBtn').onclick = async () => {
 };
 
 // ---- 업로드 ----
+// 놓는 영역 밖에 파일을 떨어뜨려도 웹뷰가 그 파일로 이동해 앱 화면이 사라지지 않게 한다.
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
 let pickedFile = null;
 function setupUpload() {
   pickedFile = null;
@@ -409,8 +412,10 @@ function upload() {
   xhr.upload.onprogress = (e) => { if (e.lengthComputable) $('#upProgress').textContent = `업로드 ${Math.round(e.loaded / e.total * 100)}%`; };
   xhr.onload = async () => {
     $('#upBtn').disabled = false;
-    const data = JSON.parse(xhr.responseText || '{}');
-    if (xhr.status >= 400) { $('#upProgress').textContent = ''; toast(data.error || '업로드 실패'); return; }
+    // 413·403처럼 JSON이 아닌 오류 응답도 화면에 알린다.
+    let data = {};
+    try { data = JSON.parse(xhr.responseText || '{}'); } catch {}
+    if (xhr.status >= 400) { $('#upProgress').textContent = ''; toast(data.error || `업로드 실패 (${xhr.status})`); return; }
     $('#upProgress').textContent = ''; renderChannelPanel(); toast('업로드했습니다. 받아쓰기를 시작합니다.');
     await loadRecordings(); selectRecording(data.id);
   };

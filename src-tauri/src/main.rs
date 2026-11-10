@@ -107,9 +107,21 @@ fn main() {
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(900.0, 600.0)
                 .theme(theme)
+                // Tauri 기본 핸들러는 파일 드롭을 가로채 페이지의 ondrop이 불리지 않는다.
+                .disable_drag_drop_handler()
                 .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Noko-Note를 실행하지 못했습니다");
+        .build(tauri::generate_context!())
+        .expect("Noko-Note를 실행하지 못했습니다")
+        .run(|_app, event| {
+            // Whisper 모델이 메모리에 올라온 채로 C++ 정적 소멸자가 돌면 ggml Metal이
+            // 자원 미해제 단언으로 abort한다. 정리할 것이 없으니 소멸자를 건너뛰고 끝낸다.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Exit = event {
+                unsafe { libc::_exit(0) }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = event;
+        });
 }
