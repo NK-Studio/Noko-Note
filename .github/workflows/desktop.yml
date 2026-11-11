@@ -67,11 +67,14 @@ jobs:
           printf '%s\n' "$APPLE_API_KEY_P8" > "$key_path"
           echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
-      # Mac에서는 Tauri가 아래 환경 변수로 Developer ID 서명과 공증을 함께 한다.
+      # Mac에서는 Tauri가 아래 환경 변수로 Developer ID 서명과 공증을 함께 한다(앱은 공증, dmg는 서명까지).
       # APPLE_API_KEY는 Tauri에서 키 ID를 뜻하므로 APPLE_API_KEY_ID 시크릿을 넘긴다.
+      # Tauri는 CI(CI=true)에서 dmg 창 꾸미기(Finder AppleScript)를 건너뛰므로 TAURI_BUNDLER_DMG_IGNORE_CI로 켠다.
+      # 그래야 tauri.conf.json의 배경(화살표·안내 문구)과 아이콘 자리가 dmg에 들어간다.
       - name: 데스크톱 앱 빌드
         working-directory: src-tauri
         env:
+          TAURI_BUNDLER_DMG_IGNORE_CI: ${{ runner.os == 'macOS' && 'true' || '' }}
           APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
           APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           KEYCHAIN_PASSWORD: ${{ runner.os == 'macOS' && secrets.KEYCHAIN_PASSWORD || '' }}
@@ -86,6 +89,29 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           spctl -a -vv -t exec "$app"
           xcrun stapler validate "$app"
+
+      # 끌어다 놓아 설치하는 dmg(왼쪽 Noko-Note → 오른쪽 Applications)도 공증해 받은 그대로 열리게 한다.
+      - name: dmg 공증
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          dmg=$(ls target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          codesign --verify --strict --verbose=2 "$dmg"
+          # 창 꾸미기가 들어갔는지(배경 그림·Finder 창 설정) 확인한다.
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$dmg" >/dev/null
+          ls -la "$mnt" "$mnt/.background"
+          test -f "$mnt/.background/background.tiff" && test -f "$mnt/.DS_Store"
+          hdiutil detach "$mnt" -quiet
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg"
+          spctl -a -vv -t open --context context:primary-signature "$dmg"
 
       - name: 공증용 API 키 지우기
         if: always() && runner.os == 'macOS'
@@ -140,7 +166,7 @@ jobs:
           | Windows | `Noko-Note_*_x64-setup.exe` (권장) 또는 `*.msi` |
 
           ### Mac에서 처음 열 때
-          Apple Developer ID로 서명·공증된 앱입니다. dmg를 열고 앱을 응용 프로그램 폴더로 옮기면 바로 실행됩니다.
+          Apple Developer ID로 서명·공증된 앱입니다. dmg를 열고 창 안의 `Noko-Note`를 옆의 `Applications` 폴더로 끌어다 놓으면 설치됩니다.
 
           ### Windows에서 처음 열 때
           SmartScreen 경고가 나오면 **추가 정보 → 실행**을 누르세요.
